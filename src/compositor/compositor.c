@@ -261,26 +261,34 @@ xwayland_event(struct wl_listener *listener, void *data)
 }
 
 static void
-attach_surface_to_view_or_create(struct wlc_compositor *compositor, struct wlc_surface *surface, enum wlc_shell_surface_type type, wlc_resource shell_surface)
+attach_surface_to_view_or_create(struct wlc_compositor *compositor, struct wlc_surface *surface, enum wlc_surface_role type, wlc_resource role)
 {
-   assert(compositor && surface && type < WLC_SHELL_SURFACE_TYPE_LAST);
+   assert(compositor && surface && type < WLC_SURFACE_ROLE_LAST);
 
    struct wlc_view *view;
    if (!(view = wlc_compositor_view_for_surface(compositor, surface)))
       return;
 
-   wlc_resource *res[WLC_SHELL_SURFACE_TYPE_LAST] = {
+   // views without role are ok.
+   if (!role)
+      return;
+
+   wlc_resource *res[WLC_SURFACE_ROLE_LAST] = {
       &view->shell_surface,
       &view->xdg_surface,
+      &view->custom_surface,
    };
 
-   const char *name[WLC_SHELL_SURFACE_TYPE_LAST] = {
+   const char *name[WLC_SURFACE_ROLE_LAST] = {
       "shell-surface",
       "xdg-surface",
+      "custom-surface",
    };
 
-   *res[type] = shell_surface;
-   wl_resource_set_user_data(wl_resource_from_wlc_resource(shell_surface, name[type]), (void*)convert_to_wlc_handle(view));
+   *res[type] = role;
+
+   if (type != WLC_CUSTOM_SURFACE)
+      wl_resource_set_user_data(wl_resource_from_wlc_resource(role, name[type]), (void*)convert_to_wlc_handle(view));
 }
 
 static void
@@ -308,7 +316,7 @@ surface_event(struct wl_listener *listener, void *data)
    struct wlc_surface_event *ev = data;
    switch (ev->type) {
       case WLC_SURFACE_EVENT_REQUEST_VIEW_ATTACH:
-         attach_surface_to_view_or_create(compositor, ev->surface, ev->attach.type, ev->attach.shell_surface);
+         attach_surface_to_view_or_create(compositor, ev->surface, ev->attach.type, ev->attach.role);
          break;
 
       case WLC_SURFACE_EVENT_REQUEST_VIEW_POPUP:
@@ -480,10 +488,8 @@ wlc_compositor_view_for_surface(struct wlc_compositor *compositor, struct wlc_su
       return NULL;
 
    struct wlc_output *output;
-   if ((output = convert_from_wlc_handle(compositor->active.output, "output"))) {
+   if ((output = convert_from_wlc_handle(compositor->active.output, "output")))
       wlc_surface_attach_to_output(surface, output, wlc_surface_get_buffer(surface));
-      wlc_view_set_mask_ptr(view, output->active.mask);
-   }
 
    wlc_surface_attach_to_view(surface, view);
    return view;
@@ -601,6 +607,8 @@ wlc_compositor_terminate(struct wlc_compositor *compositor)
       wlc_log(WLC_LOG_INFO, "Terminating compositor...");
       compositor->state.terminating = true;
 
+      WLC_INTERFACE_EMIT(compositor.terminate);
+
       if (compositor->outputs.pool.items.count > 0) {
          chck_pool_for_each_call(&compositor->outputs.pool, wlc_output_terminate);
          return;
@@ -645,6 +653,7 @@ wlc_compositor_release(struct wlc_compositor *compositor)
    wlc_backend_release(&compositor->backend);
    wlc_shell_release(&compositor->shell);
    wlc_xdg_shell_release(&compositor->xdg_shell);
+   wlc_custom_shell_release(&compositor->custom_shell);
    wlc_seat_release(&compositor->seat);
 
    if (compositor->wl.subcompositor)
@@ -706,6 +715,7 @@ wlc_compositor(struct wlc_compositor *compositor)
    if (!wlc_seat(&compositor->seat) ||
        !wlc_shell(&compositor->shell) ||
        !wlc_xdg_shell(&compositor->xdg_shell) ||
+       !wlc_custom_shell(&compositor->custom_shell) ||
        !wlc_backend(&compositor->backend))
       goto fail;
 

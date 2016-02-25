@@ -3,7 +3,7 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif 
+#endif
 
 #include <wlc/defines.h>
 #include <wlc/geometry.h>
@@ -204,6 +204,9 @@ struct wlc_interface {
    struct {
       /** Compositor is ready to accept clients. */
       void (*ready)(void);
+
+      /** Compositor is about to terminate */
+      void (*terminate)(void);
    } compositor;
 
    /**
@@ -297,6 +300,7 @@ uint32_t wlc_output_get_mask(wlc_handle output);
 void wlc_output_set_mask(wlc_handle output, uint32_t mask);
 
 /** Get pixels. If you return true in callback, the rgba data will be not freed. Do this if you don't want to copy the buffer. */
+__attribute__((deprecated("deprecated in favor of wlc_pixels_read")))
 WLC_NONULL void wlc_output_get_pixels(wlc_handle output, bool (*pixels)(const struct wlc_size *size, uint8_t *rgba, void *arg), void *arg);
 
 /** Get views in stack order. Returned array is a direct reference, careful when moving and destroying handles. */
@@ -418,6 +422,6 @@ void wlc_pointer_set_origin(const struct wlc_origin *new_origin);
 
 #ifdef __cplusplus
 }
-#endif 
+#endif
 
 #endif /* _WLC_H_ */

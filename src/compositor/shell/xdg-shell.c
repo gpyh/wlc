@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <wayland-server.h>
-#include "wayland-xdg-shell-server-protocol.h"
 #include "internal.h"
 #include "macros.h"
 #include "xdg-shell.h"
@@ -36,7 +35,7 @@ xdg_cb_shell_get_surface(struct wl_client *client, struct wl_resource *resource,
 
    wlc_resource_implement(r, wlc_xdg_surface_implementation(), NULL);
 
-   struct wlc_surface_event ev = { .attach = { .type = WLC_XDG_SURFACE, .shell_surface = r }, .surface = surface, .type = WLC_SURFACE_EVENT_REQUEST_VIEW_ATTACH };
+   struct wlc_surface_event ev = { .attach = { .type = WLC_XDG_SURFACE, .role = r }, .surface = surface, .type = WLC_SURFACE_EVENT_REQUEST_VIEW_ATTACH };
    wl_signal_emit(&wlc_system_signals()->surface, &ev);
 }
 

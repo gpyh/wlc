@@ -68,15 +68,6 @@ EXAMPLE
        return EXIT_SUCCESS;
     }
 
-OPTIONS
--------
-
-``wlc`` reads the following options on init.
-
-+-----------------------+------------------------------------------------+
-| ``--log FILE``        | Logs output to specified ``FILE``.             |
-+-----------------------+------------------------------------------------+
-
 ENV VARIABLES
 -------------
 
@@ -136,16 +127,18 @@ And the following depends:
 
 - pixman
 - wayland 1.7+
+- wayland-protocols 1.0+ [1]
 - libxkbcommon
 - udev
 - libinput
+- libx11 (X11-xcb, Xfixes)
+- libxcb (xcb-ewmh, xcb-composite, xcb-xkb, xcb-image, xcb-xfixes)
+- libgbm (usually provided by mesa in most distros)
+- libdrm
+- libEGL (GPU drivers and mesa provide this)
+- libGLESv2 (GPU drivers and mesa provide this)
 
-You will also need these for building, but they are optional runtime:
-
-- libx11
-- libxcb
-- xcb-util-image (for xwayland support atm)
-- mesa, nvidia, etc.. (GLESv2, EGL, DRM)
+1: Also bundled as submodule. Using submodule is recommended, as updates to unstable protocols won't break build. To force building from submodule even though wayland-protocols is installed in system use CMake option -DSOURCE_WLPROTO=ON.
 
 And optionally:
 
@@ -180,6 +173,8 @@ BINDINGS
 --------
 
 - `ocaml-wlc <https://github.com/Armael/ocaml-wlc>`_ - OCaml (experimental)
+- `go-wlc <https://github.com/mikkeloscar/go-wlc>`_ - Go
+- `rust-wlc <https://github.com/Immington-Industries/rust-wlc>`_ - Rust
 
 SOFTWARE USING WLC
 ------------------

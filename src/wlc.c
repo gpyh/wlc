@@ -158,7 +158,9 @@ wlc_cleanup(void)
 
       // fd process never allocates display
       wlc_xwayland_terminate();
+      wl_display_flush_clients(wlc.display);
       wlc_compositor_release(&wlc.compositor);
+      wl_display_flush_clients(wlc.display);
       wl_list_remove(&compositor_listener.link);
       wlc_resources_terminate();
       wlc_input_terminate();
@@ -279,8 +281,10 @@ wlc_terminate(void)
 WLC_API bool
 wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
 {
-   if (!interface)
+   if (!interface) {
       die("no wlc_interface was given");
+      return false; // make static analysis happy
+   }
 
    if (argc > 0 && !argv)
       die("argc was more than 0, but argv was NULL");

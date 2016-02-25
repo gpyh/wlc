@@ -4,7 +4,6 @@
 #include <assert.h>
 #include <chck/math/math.h>
 #include <wayland-server.h>
-#include "wayland-xdg-shell-server-protocol.h"
 #include "internal.h"
 #include "view.h"
 #include "macros.h"
@@ -52,6 +51,7 @@ wlc_view_map(struct wlc_view *view)
 
    wlc_output_link_view(wlc_view_get_output_ptr(view), view, LINK_ABOVE, NULL);
    configure_view(view, view->pending.edges, &view->pending.geometry);
+   wlc_view_commit_state(view, &view->pending, &view->commit);
 }
 
 void
@@ -313,7 +313,7 @@ wlc_view_set_surface(struct wlc_view *view, struct wlc_surface *surface)
 }
 
 struct wl_client*
-wlc_view_get_client(struct wlc_view *view)
+wlc_view_get_client_ptr(struct wlc_view *view)
 {
    struct wl_resource *r = (view ? wl_resource_from_wlc_resource(view->surface, "surface") : NULL);
    return (r ? wl_resource_get_client(r) : NULL);
@@ -472,12 +472,9 @@ wlc_view_focus_ptr(struct wlc_view *view)
    if (!view || (view->type & WLC_BIT_UNMANAGED))
       return;
 
-   if (view && view->x11.id && !view->x11.override_redirect) {
-      wlc_x11_window_set_active(&view->x11, true);
-   } else {
-      struct wlc_focus_event ev = { .view = view, .type = WLC_FOCUS_EVENT_VIEW };
-      wl_signal_emit(&wlc_system_signals()->focus, &ev);
-   }
+   wlc_x11_window_set_active(&view->x11, true);
+   struct wlc_focus_event ev = { .view = view, .type = WLC_FOCUS_EVENT_VIEW };
+   wl_signal_emit(&wlc_system_signals()->focus, &ev);
 }
 
 static void*
