@@ -40,6 +40,7 @@ EXAMPLE
     static bool
     view_created(wlc_handle view)
     {
+       wlc_view_set_mask(view, wlc_output_get_mask(wlc_view_get_output(view)));
        wlc_view_bring_to_front(view);
        wlc_view_focus(view);
        return true;
@@ -54,14 +55,10 @@ EXAMPLE
     int
     main(int argc, char *argv[])
     {
-       static struct wlc_interface interface = {
-          .view = {
-             .created = view_created,
-             .focus = view_focus,
-          },
-       };
+       wlc_set_view_created_cb(view_created);
+       wlc_set_view_focus_cb(view_focus);
 
-       if (!wlc_init(&interface, argc, argv))
+       if (!wlc_init())
           return EXIT_FAILURE;
 
        wlc_run();
@@ -81,8 +78,6 @@ ENV VARIABLES
 | ``WLC_OUTPUTS``      | Number of fake outputs in X11 mode.                  |
 +----------------------+------------------------------------------------------+
 | ``WLC_XWAYLAND``     | Set 0 to disable Xwayland.                           |
-+----------------------+------------------------------------------------------+
-| ``WLC_DIM``          | Brightness multiplier for dimmed views (0.5 default) |
 +----------------------+------------------------------------------------------+
 | ``WLC_LIBINPUT``     | Set 1 to force libinput. (Even on X11)               |
 +----------------------+------------------------------------------------------+
@@ -163,6 +158,10 @@ PACKAGING
 ---------
 
 For now you can look at the `AUR recipe <https://aur.archlinux.org/packages/wlc-git/>`_ for a example.
+
+Releases are signed with `1AF6D26A <http://pgp.mit.edu/pks/lookup?op=vindex&search=0xF769BB961AF6D26A>`_ and published `on GitHub <https://github.com/Cloudef/wlc/releases>`_.
+
+All 0.0.x releases are considered unstable.
 
 CONTRIBUTING
 ------------

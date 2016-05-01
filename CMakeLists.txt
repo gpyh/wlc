@@ -1,5 +1,5 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
-PROJECT(wlc VERSION 0.0.1 LANGUAGES C)
+PROJECT(wlc VERSION 0.0.2 LANGUAGES C)
 set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" "${PROJECT_SOURCE_DIR}/CMake")
 
 # Subprojects
@@ -39,12 +39,12 @@ find_package(XKBCommon REQUIRED)
 find_package(Udev REQUIRED)
 find_package(LibInput REQUIRED)
 
-find_package(X11 REQUIRED COMPONENTS X11-xcb Xfixes)
-set_package_properties(X11 PROPERTIES TYPE REQUIRED PURPOSE "Enables X11 backend")
+find_package(X11 COMPONENTS X11-xcb Xfixes)
+set_package_properties(X11 PROPERTIES TYPE RECOMMENDED PURPOSE "Enables X11 backend")
 find_package(Xwayland REQUIRED)
 set_package_properties(XWAYLAND PROPERTIES TYPE REQUIRED PURPOSE "Enables Xwayland")
-find_package(XCB REQUIRED COMPONENTS xcb-ewmh xcb-composite xcb-xkb xcb-image xcb-xfixes)
-set_package_properties(XCB PROPERTIES TYPE REQUIRED PURPOSE "Enables Xwayland and X11 backend")
+find_package(XCB COMPONENTS xcb-ewmh xcb-composite xcb-xkb xcb-image xcb-xfixes)
+set_package_properties(XCB PROPERTIES TYPE RECOMMENDED PURPOSE "Enables Xwayland and X11 backend")
 find_package(GLESv2 REQUIRED)
 set_package_properties(GLESv2 PROPERTIES TYPE REQUIRED PURPOSE "Enables OpenGL renderer")
 find_package(EGL REQUIRED)

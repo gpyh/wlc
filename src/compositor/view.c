@@ -14,6 +14,29 @@
 #include "resources/types/surface.h"
 
 static void
+surface_update_coordinate_transform(struct wlc_surface *surface, const struct wlc_geometry *area)
+{
+   assert(area);
+
+   if (!surface || surface->size.w * surface->size.h <= 0)
+      return;
+
+   surface->coordinate_transform.w = (float)(area->size.w) / surface->size.w;
+   surface->coordinate_transform.h = (float)(area->size.h) / surface->size.h;
+}
+
+static void
+surface_tree_update_coordinate_transform(struct wlc_surface *surface, const struct wlc_geometry *area)
+{
+   assert(surface && area);
+   surface_update_coordinate_transform(surface, area);
+
+   wlc_resource *s;
+   chck_iter_pool_for_each(&surface->subsurface_list, s)
+      surface_update_coordinate_transform(convert_from_wlc_resource(*s, "surface"), area);
+}
+
+static void
 configure_view(struct wlc_view *view, uint32_t edges, const struct wlc_geometry *g)
 {
    assert(view && g);
@@ -25,7 +48,7 @@ configure_view(struct wlc_view *view, uint32_t edges, const struct wlc_geometry 
       xdg_surface_send_configure(r, g->size.w, g->size.h, &states, serial);
    } else if (view->shell_surface && (r = wl_resource_from_wlc_resource(view->shell_surface, "shell-surface"))) {
       wl_shell_surface_send_configure(r, edges, g->size.w, g->size.h);
-   } else if (view->x11.id) {
+   } else if (is_x11_view(view)) {
       wlc_x11_window_configure(&view->x11, g);
    }
 }
@@ -127,6 +150,11 @@ wlc_view_commit_state(struct wlc_view *view, struct wlc_view_state *pending, str
       configure_view(view, pending->edges, &pending->geometry);
 
    *out = *pending;
+
+   struct wlc_geometry geom, visible;
+   wlc_view_get_bounds(view, &geom, &visible);
+   surface_tree_update_coordinate_transform(surface, &visible);
+
    wlc_dlog(WLC_DBG_COMMIT, "=> commit view %" PRIuWLC, convert_to_wlc_handle(view));
 }
 
@@ -135,7 +163,7 @@ wlc_view_ack_surface_attach(struct wlc_view *view, struct wlc_surface *surface)
 {
    assert(view && surface);
 
-   if (view->x11.id) {
+   if (is_x11_view(view)) {
       surface->pending.opaque.extents = (pixman_box32_t){ 0, 0, surface->size.w, surface->size.h };
       view->surface_pending.visible = (struct wlc_geometry){ wlc_point_zero, surface->size };
    }
@@ -153,7 +181,7 @@ wlc_view_ack_surface_attach(struct wlc_view *view, struct wlc_surface *surface)
 static bool
 should_be_transformed_by_parent(struct wlc_view *view)
 {
-   return !(view->type & WLC_BIT_OVERRIDE_REDIRECT) && !(view->type & WLC_BIT_UNMANAGED);
+   return !is_x11_view(view);
 }
 
 void
@@ -189,7 +217,7 @@ wlc_view_get_bounds(struct wlc_view *view, struct wlc_geometry *out_bounds, stru
 
    // Actual visible area of the view
    // The idea is to draw black borders to the bounds area, while centering the visible area.
-   if ((view->x11.id || view->shell_surface) && !wlc_size_equals(&surface->size, &out_bounds->size)) {
+   if ((is_x11_view(view) || view->shell_surface) && !wlc_size_equals(&surface->size, &out_bounds->size)) {
       out_visible->size = surface->size;
 
       // Scale visible area retaining aspect
@@ -378,7 +406,7 @@ wlc_view_set_state_ptr(struct wlc_view *view, enum wlc_view_state_bit state, boo
    if (!view)
       return;
 
-   if (view->x11.id)
+   if (is_x11_view(view))
       wlc_x11_window_set_state(&view->x11, state, toggle);
 
 #define BIT_TOGGLE(w, m, f) (w & ~m) | (-f & m)
@@ -433,7 +461,7 @@ wlc_view_close_ptr(struct wlc_view *view)
    struct wl_resource *r;
    if (view->xdg_surface && (r = wl_resource_from_wlc_resource(view->xdg_surface, "xdg-surface"))) {
       xdg_surface_send_close(r);
-   } else if (view->x11.id) {
+   } else if (is_x11_view(view)) {
       wlc_x11_window_close(&view->x11);
    } else if (view->xdg_popup && (r = wl_resource_from_wlc_resource(view->xdg_popup, "xdg-popup"))) {
       xdg_popup_send_popup_done(r);
@@ -469,10 +497,12 @@ wlc_view_send_to_other(struct wlc_view *view, enum output_link link, struct wlc_
 void
 wlc_view_focus_ptr(struct wlc_view *view)
 {
-   if (!view || (view->type & WLC_BIT_UNMANAGED))
+   if (view && (view->type & WLC_BIT_UNMANAGED))
       return;
 
-   wlc_x11_window_set_active(&view->x11, true);
+   if (view)
+      wlc_x11_window_set_active(&view->x11, true);
+
    struct wlc_focus_event ev = { .view = view, .type = WLC_FOCUS_EVENT_VIEW };
    wl_signal_emit(&wlc_system_signals()->focus, &ev);
 }
@@ -555,6 +585,18 @@ WLC_API const struct wlc_geometry*
 wlc_view_get_geometry(wlc_handle view)
 {
    return get(convert_from_wlc_handle(view, "view"), offsetof(struct wlc_view, pending.geometry));
+}
+
+WLC_API void
+wlc_view_get_visible_geometry(wlc_handle view, struct wlc_geometry *out_geometry)
+{
+   assert(out_geometry);
+
+   struct wlc_view *v;
+   if (!(v = convert_from_wlc_handle(view, "view")))
+      return;
+
+   wlc_view_get_bounds(v, out_geometry, NULL);
 }
 
 WLC_API void

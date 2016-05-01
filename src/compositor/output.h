@@ -65,10 +65,6 @@ struct wlc_output {
 
    // FIXME: replace with better system
    struct {
-      struct {
-         void *arg;
-         bool (*cb)(const struct wlc_size *size, uint8_t *rgba, void *userdata);
-      } pixels;
       struct wlc_backend_surface bsurface;
       bool terminate;
       bool sleep;
@@ -79,6 +75,7 @@ struct wlc_output {
       uint32_t frame_time;
       bool pending, scheduled, activity, sleeping;
       bool background_visible;
+      bool created;
    } state;
 
    struct {

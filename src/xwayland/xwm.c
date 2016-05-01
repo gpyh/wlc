@@ -136,7 +136,7 @@ static struct wlc_view*
 view_for_window(struct wlc_x11_window *win)
 {
    struct wlc_view *view;
-   return (win ? wl_container_of(win, view, x11) : NULL);
+   return (win && win->paired ? wl_container_of(win, view, x11) : NULL);
 }
 
 static void
@@ -370,6 +370,7 @@ link_surface(struct wlc_xwm *xwm, struct wlc_x11_window *win, struct wl_resource
 
    wlc_dlog(WLC_DBG_XWM, "-> Paired collisions (%u)", chck_hash_table_collisions(&xwm->paired));
 
+   view->x11.paired = true;
    wlc_view_set_type_ptr(view, WLC_BIT_OVERRIDE_REDIRECT, view->x11.override_redirect);
    read_properties(xwm, &view->x11);
 
@@ -426,11 +427,17 @@ delete_window(xcb_window_t window)
    XCB_CALL(xcb_send_event_checked(x11.connection, 0, window, XCB_EVENT_MASK_NO_EVENT, (char*)&ev));
 }
 
-WLC_PURE enum wlc_surface_format
+static WLC_PURE enum wlc_surface_format
 wlc_x11_window_get_surface_format(struct wlc_x11_window *win)
 {
    assert(win);
    return (win->has_alpha ? SURFACE_RGBA : SURFACE_RGB);
+}
+
+void
+wlc_x11_window_set_surface_format(struct wlc_surface *surface, struct wlc_x11_window *win)
+{
+   surface->format = wlc_x11_window_get_surface_format(win);
 }
 
 void

@@ -180,14 +180,14 @@ get_visible_views(struct wlc_output *output, struct chck_iter_pool *visible)
       // This place sucks for this, but otherwise we would need API level interaction.
       // This is also very ugly, we can't unmap since it would destroy the wayland surface.
       // We move the window out of bounds instead.
-      if (v->x11.id && v->x11.hidden == vis) {
+      if (is_x11_view(v) && wlc_x11_is_window_hidden(&v->x11) == vis) {
          struct wlc_geometry g = v->pending.geometry;
 
          if (!vis)
             g.origin.x = -g.size.w;
 
          wlc_x11_window_configure(&v->x11, &g);
-         v->x11.hidden = !vis;
+         wlc_x11_set_window_hidden(&v->x11, !vis);
       }
 
       if (!vis)
@@ -234,6 +234,43 @@ finish_frame_tasks(struct wlc_output *output)
 }
 
 static void
+render_subsurface(struct wlc_output *output, struct wlc_surface *surface, struct wlc_point offset, struct wlc_coordinate_scale parent_scale)
+{
+   const struct wlc_geometry g = (struct wlc_geometry) {
+       .origin = {offset.x + parent_scale.w * (surface->commit.subsurface_position.x + surface->commit.offset.x),
+                  offset.y + parent_scale.h * (surface->commit.subsurface_position.y + surface->commit.offset.y)},
+       .size = surface->size
+   };
+   wlc_render_surface_paint(&output->render, &output->context, surface, &g);
+}
+
+static void
+subsurfaces_render(struct wlc_output *output, struct wlc_surface *surface, struct wlc_coordinate_scale parent_scale, struct chck_iter_pool *callbacks, struct wlc_point offset)
+{
+
+   if (!surface)
+       return;
+   /* do not render view's main surface twice */
+   if (surface->parent)
+       render_subsurface(output, surface, offset, parent_scale);
+
+   wlc_resource *sub;
+   chck_iter_pool_for_each(&surface->subsurface_list, sub) {
+       subsurfaces_render(output, convert_from_wlc_resource(*sub, "surface"), surface->coordinate_transform,
+             callbacks,
+             (struct wlc_point) {
+              offset.x + (surface->parent ? 0 : surface->commit.subsurface_position.x / parent_scale.w),
+              offset.y + (surface->parent ? 0 : surface->commit.subsurface_position.y / parent_scale.h)
+             });
+   }
+
+   wlc_resource *r;
+   chck_iter_pool_for_each(&surface->commit.frame_cbs, r)
+      chck_iter_pool_push_back(callbacks, r);
+   chck_iter_pool_flush(&surface->commit.frame_cbs);
+}
+
+static void
 render_view(struct wlc_output *output, struct wlc_view *view, struct chck_iter_pool *callbacks)
 {
    assert(output && callbacks);
@@ -245,17 +282,17 @@ render_view(struct wlc_output *output, struct wlc_view *view, struct chck_iter_p
    if (!(surface = convert_from_wlc_resource(view->surface, "surface")))
       return;
 
+   wlc_view_commit_state(view, &view->pending, &view->commit);
    WLC_INTERFACE_EMIT(view.render.pre, convert_to_wlc_handle(view));
    wlc_render_flush_fakefb(&output->render, &output->context);
-   wlc_view_commit_state(view, &view->pending, &view->commit);
    wlc_render_view_paint(&output->render, &output->context, view);
+
+   struct wlc_geometry b;
+   wlc_view_get_bounds(view, &b, NULL);
+   subsurfaces_render(output, surface, (struct wlc_coordinate_scale) {1, 1}, callbacks, b.origin);
+
    WLC_INTERFACE_EMIT(view.render.post, convert_to_wlc_handle(view));
    wlc_render_flush_fakefb(&output->render, &output->context);
-
-   wlc_resource *r;
-   chck_iter_pool_for_each(&surface->commit.frame_cbs, r)
-      chck_iter_pool_push_back(callbacks, r);
-   chck_iter_pool_flush(&surface->commit.frame_cbs);
 }
 
 static bool
@@ -321,18 +358,6 @@ repaint(struct wlc_output *output)
    wl_signal_emit(&wlc_system_signals()->render, &ev);
 
    rendering_output = NULL;
-
-   {
-      size_t sz;
-      void *rgba;
-      struct wlc_geometry g = { { 0, 0 }, output->resolution };
-      if (output->task.pixels.cb && !chck_mul_ofsz(g.size.w, g.size.h, &sz) && (rgba = chck_calloc_of(4, sz))) {
-         wlc_render_read_pixels(&output->render, &output->context, WLC_RGBA8888, &g, &g, rgba);
-         if (!output->task.pixels.cb(&g.size, rgba, output->task.pixels.arg))
-            free(rgba);
-         memset(&output->task.pixels, 0, sizeof(output->task.pixels));
-      }
-   }
 
    output->state.pending = true;
    wlc_context_swap(&output->context, &output->bsurface);
@@ -518,6 +543,9 @@ wlc_output_set_backend_surface(struct wlc_output *output, struct wlc_backend_sur
       }
    }
 
+   if (output->state.created)
+      WLC_INTERFACE_EMIT(output.context.destroyed, convert_to_wlc_handle(output));
+
    wlc_render_release(&output->render, &output->context);
    wlc_context_release(&output->context);
    wlc_backend_surface_release(&output->bsurface);
@@ -546,6 +574,9 @@ wlc_output_set_backend_surface(struct wlc_output *output, struct wlc_backend_sur
             wlc_surface_attach_to_output(s, output, wlc_surface_get_buffer(s));
          }
       }
+
+      if (output->state.created)
+         WLC_INTERFACE_EMIT(output.context.created, convert_to_wlc_handle(output));
 
       wlc_log(WLC_LOG_INFO, "Set new bsurface to output (%" PRIuWLC ")", convert_to_wlc_handle(output));
    } else {
@@ -783,20 +814,6 @@ wlc_output_set_mask_ptr(struct wlc_output *output, uint32_t mask)
    wlc_output_schedule_repaint(output);
 }
 
-void
-wlc_output_get_pixels_ptr(struct wlc_output *output, bool (*pixels)(const struct wlc_size *size, uint8_t *rgba, void *arg), void *arg)
-{
-   assert(pixels);
-
-   if (!output)
-      return;
-
-   // TODO: we need real task system, not like we do right now.
-   output->task.pixels.cb = pixels;
-   output->task.pixels.arg = arg;
-   wlc_output_schedule_repaint(output);
-}
-
 bool
 wlc_output_set_views_ptr(struct wlc_output *output, const wlc_handle *views, size_t memb)
 {
@@ -881,12 +898,6 @@ WLC_API void
 wlc_output_set_mask(wlc_handle output, uint32_t mask)
 {
    wlc_output_set_mask_ptr(convert_from_wlc_handle(output, "output"), mask);
-}
-
-WLC_API void
-wlc_output_get_pixels(wlc_handle output, bool (*pixels)(const struct wlc_size *size, uint8_t *rgba, void *arg), void *arg)
-{
-   wlc_output_get_pixels_ptr(convert_from_wlc_handle(output, "output"), pixels, arg);
 }
 
 WLC_API const wlc_handle*

@@ -216,7 +216,7 @@ fd_close(dev_t st_dev, ino_t st_ino)
    }
 
    if (!pfd) {
-      wlc_log(WLC_LOG_WARN, "Tried to close fd that we did not open: (%zu, %zu)", st_dev, st_ino);
+      wlc_log(WLC_LOG_WARN, "Tried to close fd that we did not open: (%zu, %zu)", (size_t)st_dev, (size_t)st_ino);
       return;
    }
 
@@ -522,7 +522,7 @@ wlc_fd_terminate(void)
 }
 
 void
-wlc_fd_init(int argc, char *argv[], bool has_logind)
+wlc_fd_init(bool has_logind)
 {
    wlc.has_logind = has_logind;
 
@@ -544,9 +544,6 @@ wlc_fd_init(int argc, char *argv[], bool has_logind)
       sigaction(SIGUSR2, &action, NULL);
       sigaction(SIGINT, &action, NULL);
       sigaction(SIGTERM, &action, NULL);
-
-      for (int i = 0; i < argc; ++i)
-         strncpy(argv[i], (i == 0 ? "wlc" : ""), strlen(argv[i]));
 
       communicate(sock[1], getppid());
       _exit(EXIT_SUCCESS);

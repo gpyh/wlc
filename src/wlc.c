@@ -12,7 +12,7 @@
 #include "xwayland/xwayland.h"
 #include "resources/resources.h"
 
-static struct {
+static struct wlc {
    struct wlc_compositor compositor;
    struct wlc_interface interface;
    struct wlc_system_signals signals;
@@ -179,17 +179,17 @@ wlc_cleanup(void)
 }
 
 WLC_API struct wlc_event_source*
-wlc_event_loop_add_fd(int fd, uint32_t mask, int (*cb)(int fd, uint32_t mask, void *arg), void *arg)
+wlc_event_loop_add_fd(int fd, uint32_t mask, int (*cb)(int fd, uint32_t mask, void *userdata), void *userdata)
 {
    assert(wlc_event_loop());
-   return (struct wlc_event_source*)wl_event_loop_add_fd(wlc_event_loop(), fd, mask, cb, arg);
+   return (struct wlc_event_source*)wl_event_loop_add_fd(wlc_event_loop(), fd, mask, cb, userdata);
 }
 
 WLC_API struct wlc_event_source*
-wlc_event_loop_add_timer(int (*cb)(void *arg), void *arg)
+wlc_event_loop_add_timer(int (*cb)(void *userdata), void *userdata)
 {
    assert(wlc_event_loop());
-   return (struct wlc_event_source*)wl_event_loop_add_timer(wlc_event_loop(), cb, arg);
+   return (struct wlc_event_source*)wl_event_loop_add_timer(wlc_event_loop(), cb, userdata);
 }
 
 WLC_API bool
@@ -279,23 +279,19 @@ wlc_terminate(void)
 }
 
 WLC_API bool
-wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
+wlc_init(void)
 {
-   if (!interface) {
-      die("no wlc_interface was given");
-      return false; // make static analysis happy
-   }
-
-   if (argc > 0 && !argv)
-      die("argc was more than 0, but argv was NULL");
-
    if (wlc.display)
       return true;
 
-   // reset wlc state, but keep log function
-   void *log_fun = wlc.log_fun;
-   memset(&wlc, 0, sizeof(wlc));
-   wlc.log_fun = log_fun;
+   // reset wlc state, but keep important data
+   {
+      void *log_fun = wlc.log_fun;
+      struct wlc_interface old_interface = wlc.interface;
+      wlc = (struct wlc){0};
+      wlc.log_fun = log_fun;
+      wlc.interface = old_interface;
+   }
 
    wl_log_set_handler_server(wl_cb_log);
 
@@ -307,10 +303,8 @@ wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
    if (getuid() != geteuid() || getgid() != getegid()) {
       wlc_log(WLC_LOG_INFO, "Doing work on SUID/SGID side and dropping permissions");
       privileged = true;
-   } else if (getuid() == 0) {
-      die("Do not run wlc compositor as root");
    } else if (!x11display && !has_logind && access("/dev/input/event0", R_OK | W_OK) != 0) {
-      die("Not running from X11 and no access to /dev/input/event0 or logind available");
+      die("Not running from X11 and no access to /dev/input/event0 or logind unavailable");
    }
 
    int vt = 0;
@@ -321,7 +315,9 @@ wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
    if (!privileged && !x11display && has_logind) {
       if (!(wlc.display = wl_display_create()))
          die("Failed to create wayland display");
-      if (!(vt = wlc_logind_init("seat0")))
+
+      const char *xdg_seat = getenv("XDG_SEAT");
+      if (!(vt = wlc_logind_init(xdg_seat ? xdg_seat : "seat0")))
          die("Failed to init logind");
    }
 #else
@@ -338,7 +334,7 @@ wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
    {
       struct wl_display *display = wlc.display;
       wlc.display = NULL;
-      wlc_fd_init(argc, argv, (vt != 0));
+      wlc_fd_init((vt != 0));
       wlc.display = display;
    }
 
@@ -383,6 +379,167 @@ wlc_init(const struct wlc_interface *interface, int argc, char *argv[])
    if (!wlc_compositor(&wlc.compositor))
       die("Failed to init compositor");
 
-   memcpy(&wlc.interface, interface, sizeof(wlc.interface));
    return true;
+}
+
+WLC_API void
+wlc_set_output_created_cb(bool (*cb)(wlc_handle output))
+{
+   wlc.interface.output.created = cb;
+}
+
+WLC_API void
+wlc_set_output_destroyed_cb(void (*cb)(wlc_handle output))
+{
+   wlc.interface.output.destroyed = cb;
+}
+
+WLC_API void
+wlc_set_output_focus_cb(void (*cb)(wlc_handle output, bool focus))
+{
+   wlc.interface.output.focus = cb;
+}
+
+WLC_API void
+wlc_set_output_resolution_cb(void (*cb)(wlc_handle output, const struct wlc_size *from, const struct wlc_size *to))
+{
+   wlc.interface.output.resolution = cb;
+}
+
+WLC_API void
+wlc_set_output_render_pre_cb(void (*cb)(wlc_handle output))
+{
+   wlc.interface.output.render.pre = cb;
+}
+
+WLC_API void
+wlc_set_output_render_post_cb(void (*cb)(wlc_handle output))
+{
+   wlc.interface.output.render.post = cb;
+}
+
+WLC_API void
+wlc_set_output_context_created_cb(void (*cb)(wlc_handle output))
+{
+   wlc.interface.output.context.created = cb;
+}
+
+WLC_API void
+wlc_set_output_context_destroyed_cb(void (*cb)(wlc_handle output))
+{
+   wlc.interface.output.context.destroyed = cb;
+}
+
+WLC_API void
+wlc_set_view_created_cb(bool (*cb)(wlc_handle view))
+{
+   wlc.interface.view.created = cb;
+}
+
+WLC_API void
+wlc_set_view_destroyed_cb(void (*cb)(wlc_handle view))
+{
+   wlc.interface.view.destroyed = cb;
+}
+
+WLC_API void
+wlc_set_view_focus_cb(void (*cb)(wlc_handle view, bool focus))
+{
+   wlc.interface.view.focus = cb;
+}
+
+WLC_API void
+wlc_set_view_move_to_output_cb(void (*cb)(wlc_handle view, wlc_handle from_output, wlc_handle to_output))
+{
+   wlc.interface.view.move_to_output = cb;
+}
+
+WLC_API void
+wlc_set_view_request_geometry_cb(void (*cb)(wlc_handle view, const struct wlc_geometry*))
+{
+   wlc.interface.view.request.geometry = cb;
+}
+
+WLC_API void
+wlc_set_view_request_state_cb(void (*cb)(wlc_handle view, enum wlc_view_state_bit, bool toggle))
+{
+   wlc.interface.view.request.state = cb;
+}
+
+WLC_API void
+wlc_set_view_request_move_cb(void (*cb)(wlc_handle view, const struct wlc_point*))
+{
+   wlc.interface.view.request.move = cb;
+}
+
+WLC_API void
+wlc_set_view_request_resize_cb(void (*cb)(wlc_handle view, uint32_t edges, const struct wlc_point*))
+{
+   wlc.interface.view.request.resize = cb;
+}
+
+WLC_API void
+wlc_set_view_render_pre_cb(void (*cb)(wlc_handle view))
+{
+   wlc.interface.view.render.pre = cb;
+}
+
+WLC_API void
+wlc_set_view_render_post_cb(void (*cb)(wlc_handle view))
+{
+   wlc.interface.view.render.post = cb;
+}
+
+WLC_API void
+wlc_set_keyboard_key_cb(bool (*cb)(wlc_handle view, uint32_t time, const struct wlc_modifiers*, uint32_t key, enum wlc_key_state))
+{
+   wlc.interface.keyboard.key = cb;
+}
+
+WLC_API void
+wlc_set_pointer_button_cb(bool (*cb)(wlc_handle view, uint32_t time, const struct wlc_modifiers*, uint32_t button, enum wlc_button_state, const struct wlc_point*))
+{
+   wlc.interface.pointer.button = cb;
+}
+
+WLC_API void
+wlc_set_pointer_scroll_cb(bool (*cb)(wlc_handle view, uint32_t time, const struct wlc_modifiers*, uint8_t axis_bits, double amount[2]))
+{
+   wlc.interface.pointer.scroll = cb;
+}
+
+WLC_API void
+wlc_set_pointer_motion_cb(bool (*cb)(wlc_handle view, uint32_t time, const struct wlc_point*))
+{
+   wlc.interface.pointer.motion = cb;
+}
+
+WLC_API void
+wlc_set_touch_cb(bool (*cb)(wlc_handle view, uint32_t time, const struct wlc_modifiers*, enum wlc_touch_type, int32_t slot, const struct wlc_point*))
+{
+   wlc.interface.touch.touch = cb;
+}
+
+WLC_API void
+wlc_set_compositor_ready_cb(void (*cb)(void))
+{
+   wlc.interface.compositor.ready = cb;
+}
+
+WLC_API void
+wlc_set_compositor_terminate_cb(void (*cb)(void))
+{
+   wlc.interface.compositor.terminate = cb;
+}
+
+WLC_API void
+wlc_set_input_created_cb(bool (*cb)(struct libinput_device *device))
+{
+   wlc.interface.input.created = cb;
+}
+
+WLC_API void
+wlc_set_input_destroyed_cb(void (*cb)(struct libinput_device *device))
+{
+   wlc.interface.input.destroyed = cb;
 }

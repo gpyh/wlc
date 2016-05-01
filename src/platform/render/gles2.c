@@ -17,7 +17,6 @@
 #include "resources/types/xdg-surface.h"
 #include "resources/types/buffer.h"
 
-static GLfloat DIM = 0.5f;
 static bool DRAW_OPAQUE = false;
 
 static const GLubyte cursor_palette[];
@@ -38,7 +37,6 @@ enum {
    UNIFORM_TEXTURE1,
    UNIFORM_TEXTURE2,
    UNIFORM_RESOLUTION,
-   UNIFORM_DIM,
    UNIFORM_LAST,
 };
 
@@ -54,7 +52,6 @@ static const char *uniform_names[UNIFORM_LAST] = {
    "texture1",
    "texture2",
    "resolution",
-   "dim",
 };
 
 static const struct {
@@ -88,7 +85,6 @@ struct ctx {
 
 struct paint {
    struct wlc_geometry visible;
-   GLfloat dim;
    enum program_type program;
    bool filter;
 };
@@ -153,9 +149,6 @@ static void
 set_program(struct ctx *context, enum program_type type)
 {
    assert(context && type >= 0 && type < PROGRAM_LAST);
-
-   if (&context->programs[type] == context->program)
-      return;
 
    context->program = &context->programs[type];
    GL_CALL(glUseProgram(context->program->obj));
@@ -230,21 +223,19 @@ create_context(void)
       "#version 100\n"
       "precision mediump float;\n"
       "uniform sampler2D texture0;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main() {\n"
-      "  gl_FragColor = vec4(texture2D(texture0, v_uv).rgb * dim, 1.0);\n"
+      "  gl_FragColor = vec4(texture2D(texture0, v_uv).rgb, 1.0);\n"
       "}\n";
 
    const char *frag_shader_rgba =
       "#version 100\n"
       "precision mediump float;\n"
       "uniform sampler2D texture0;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main() {\n"
       "  vec4 col = texture2D(texture0, v_uv);\n"
-      "  gl_FragColor = vec4(col.rgb * dim, col.a);\n"
+      "  gl_FragColor = vec4(col.rgb, col.a);\n"
       "}\n";
 
    const char *frag_shader_egl =
@@ -252,18 +243,14 @@ create_context(void)
       "#extension GL_OES_EGL_image_external : require\n"
       "precision mediump float;\n"
       "uniform samplerExternalOES texture0;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main()\n"
       "{\n"
       "  vec4 col = texture2D(texture0, v_uv);\n"
-      "  gl_FragColor = vec4(col.rgb * dim, col.a)\n;"
+      "  gl_FragColor = vec4(col.rgb, col.a)\n;"
       "}\n";
 
 #define FRAGMENT_CONVERT_YUV                                        \
-   "  y *= dim;\n"                                               \
-   "  u *= dim;\n"                                               \
-   "  v *= dim;\n"                                               \
    "  gl_FragColor.r = y + 1.59602678 * v;\n"                    \
    "  gl_FragColor.g = y - 0.39176229 * u - 0.81296764 * v;\n"   \
    "  gl_FragColor.b = y + 2.01723214 * u;\n"                    \
@@ -274,7 +261,6 @@ create_context(void)
       "precision mediump float;\n"
       "uniform sampler2D texture0;\n"
       "uniform sampler2D texture1;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main() {\n"
       "  float y = 1.16438356 * (texture2D(texture0, v_uv).x - 0.0625);\n"
@@ -289,7 +275,6 @@ create_context(void)
       "uniform sampler2D texture0;\n"
       "uniform sampler2D texture1;\n"
       "uniform sampler2D texture2;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main() {\n"
       "  float y = 1.16438356 * (texture2D(texture0, v_uv).x - 0.0625);\n"
@@ -303,7 +288,6 @@ create_context(void)
       "precision mediump float;\n"
       "uniform sampler2D texture0;\n"
       "uniform sampler2D texture1;\n"
-      "uniform float dim;\n"
       "varying vec2 v_uv;\n"
       "void main() {\n"
       "  float y = 1.16438356 * (texture2D(texture0, v_uv).x - 0.0625);\n"
@@ -331,10 +315,15 @@ create_context(void)
 #endif
 
    context->extensions = (const char*)GL_CALL(glGetString(GL_EXTENSIONS));
+   wlc_log(WLC_LOG_INFO, "%s", context->extensions);
 
    if (!has_extension(context, "GL_OES_EGL_image_external")) {
       wlc_log(WLC_LOG_WARN, "gles2: GL_OES_EGL_image_external not available");
       frag_shader_egl = frag_shader_dummy;
+   }
+
+   if (!has_extension(context, "GL_EXT_texture_format_BGRA8888")) {
+      wlc_log(WLC_LOG_WARN, "gles2: GL_EXT_texture_format_BGRA8888 is not available, rendering for many surfaces will most likely be broken");
    }
 
    const struct {
@@ -539,8 +528,8 @@ shm_attach(struct wlc_surface *surface, struct wlc_buffer *buffer, struct wl_shm
    }
 
    struct wlc_view *view;
-   if ((view = convert_from_wlc_handle(surface->view, "view")) && view->x11.id)
-      surface->format = wlc_x11_window_get_surface_format(&view->x11);
+   if ((view = convert_from_wlc_handle(surface->view, "view")) && is_x11_view(view))
+      wlc_x11_window_set_surface_format(surface, &view->x11);
 
    surface_gen_textures(surface, 1);
    GL_CALL(glBindTexture(GL_TEXTURE_2D, surface->textures[0]));
@@ -551,6 +540,8 @@ shm_attach(struct wlc_surface *surface, struct wlc_buffer *buffer, struct wl_shm
    void *data = wl_shm_buffer_get_data(buffer->shm_buffer);
    GL_CALL(glTexImage2D(GL_TEXTURE_2D, 0, gl_format, pitch, buffer->size.h, 0, gl_format, gl_pixel_type, data));
    wl_shm_buffer_end_access(buffer->shm_buffer);
+   GL_CALL(glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0));
+
    return true;
 }
 
@@ -602,8 +593,8 @@ egl_attach(struct ctx *context, struct wlc_context *ectx, struct wlc_surface *su
    }
 
    struct wlc_view *view;
-   if ((view = convert_from_wlc_handle(surface->view, "view")) && view->x11.id)
-      surface->format = wlc_x11_window_get_surface_format(&view->x11);
+   if ((view = convert_from_wlc_handle(surface->view, "view")) && is_x11_view(view))
+      wlc_x11_window_set_surface_format(surface, &view->x11);
 
    if (num_planes > 3) {
       wlc_log(WLC_LOG_WARN, "planes > 3 in egl surfaces not supported, nor should be possible");
@@ -675,10 +666,6 @@ texture_paint(struct ctx *context, GLuint *textures, GLuint nmemb, const struct 
 
    set_program(context, settings->program);
 
-   if (settings->dim > 0.0f) {
-      GL_CALL(glUniform1fv(context->program->uniforms[UNIFORM_DIM], 1, &settings->dim));
-   }
-
    for (GLuint i = 0; i < nmemb; ++i) {
       if (!textures[i])
          break;
@@ -727,7 +714,6 @@ surface_paint(struct ctx *context, struct wlc_surface *surface, const struct wlc
 {
    struct paint settings;
    memset(&settings, 0, sizeof(settings));
-   settings.dim = 1.0f;
    settings.program = (enum program_type)surface->format;
    settings.visible = *geometry;
    surface_paint_internal(context, surface, geometry, &settings);
@@ -744,7 +730,6 @@ view_paint(struct ctx *context, struct wlc_view *view)
 
    struct paint settings;
    memset(&settings, 0, sizeof(settings));
-   settings.dim = ((view->commit.state & WLC_BIT_ACTIVATED) || (view->type & (WLC_BIT_UNMANAGED|WLC_BIT_SPLASH|WLC_BIT_OVERRIDE_REDIRECT)) ? 1.0f : DIM);
    settings.program = (enum program_type)surface->format;
 
    struct wlc_geometry geometry;
@@ -783,14 +768,14 @@ clamp_to_bounds(struct wlc_geometry *g, const struct wlc_size *bounds)
       g->size.w += g->origin.x;
       g->origin.x = 0;
    } else if ((uint32_t)g->origin.x > bounds->w) {
-      g->origin.x = 0;
+      g->origin.x = bounds->w;
    }
 
    if (g->origin.y < 0) {
       g->size.h += g->origin.y;
       g->origin.y = 0;
    } else if ((uint32_t)g->origin.y > bounds->h) {
-      g->origin.y = 0;
+      g->origin.y = bounds->h;
    }
 
    if (g->origin.x + g->size.w > bounds->w)
@@ -832,7 +817,6 @@ flush_fakefb(struct ctx *context)
       return;
 
    struct paint settings = {0};
-   settings.dim = 1.0f;
    settings.program = PROGRAM_RGBA;
    texture_paint(context, &context->textures[TEXTURE_FAKEFB], 1, &(struct wlc_geometry){ .origin = { 0, 0 }, .size = context->resolution }, &settings);
    clear_fakefb(context);
@@ -870,6 +854,7 @@ wlc_gles2(struct wlc_render_api *api)
    if (!(ctx = create_context()))
       return NULL;
 
+   api->renderer_type = WLC_RENDERER_GLES2;
    api->terminate = terminate;
    api->resolution = resolution;
    api->surface_destroy = surface_destroy;
@@ -882,7 +867,6 @@ wlc_gles2(struct wlc_render_api *api)
    api->flush_fakefb = flush_fakefb;
    api->clear = clear;
 
-   chck_cstr_to_f(getenv("WLC_DIM"), &DIM);
    chck_cstr_to_bool(getenv("WLC_DRAW_OPAQUE"), &DRAW_OPAQUE);
 
    wlc_log(WLC_LOG_INFO, "GLES2 renderer initialized");
